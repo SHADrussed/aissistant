@@ -89,3 +89,21 @@ Codex proxy trust выделен `Dockerfile.codex`. В Railway выбирает
 Успех следующего Railway deployment нужно подтвердить в его build/runtime logs.
 Повтор старого failed deployment может брать прежний коммит: выбирайте новую
 версию из main, с исправлением Dockerfile. Личные интеграции остаются выключенными.
+
+## Автоматизация CI — 23 октября 2026
+
+Добавлен workflow `.github/workflows/ci.yml`: push в main, pull request,
+ручной запуск и еженедельная проверка. Локально выполнено:
+
+- actionlint 1.7.7: workflow прошёл проверку синтаксиса и expressions.
+- Полный набор с одноразовым PostgreSQL 17: **77 passed**, без skips.
+- После рестарта PostgreSQL сохранены cursor и 5 pending; доставка 5 → 0 прошла.
+- Ruff check/format и git diff --check: passed.
+- Основной Dockerfile: build --check без предупреждений. Вариант Codex собран
+  с временным CA; offline container smoke (состояние, права, lock, SIGTERM) прошёл.
+
+Запуск самого GitHub Actions runner, production Dockerfile на GitHub и ожидание CI
+в Railway локальные проверки не подтверждают. Владелец сообщил, что Railway deploy
+готов; независимого доступа к его панели/логам и рабочим переменным не было.
+GitHub CLI не прошёл проверку авторизации, поэтому удалённый результат Actions
+нужно проверить через GitHub UI. Личные интеграции не включались.

@@ -12,6 +12,10 @@ MVP фонового worker на Python 3.12: каждые 15 минут ана�
 [Личная авторизация](docs/personal-authorization.md) · [Отдельный бот](docs/telegram-bot.md) ·
 [Миграции](docs/database-migrations.md) · [Проверки и аудит](docs/deployment-audit.md)
 
+[Автоматические проверки и связь с Railway](docs/automation.md): GitHub Actions
+проверяет Python/PostgreSQL и Docker при обновлении `main`, в pull request и еженедельно.
+Для ожидания успешного CI перед deploy включите **Wait for CI** в Railway.
+
 ## Безопасный запуск без личных данных
 
 Нужны Python 3.12 и uv. Из корня репозитория:
