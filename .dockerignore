@@ -1,0 +1,27 @@
+.git
+.venv
+.env*
+*.session*
+*.db*
+*.sqlite*
+.data
+config/local.toml
+credentials*.json
+token*.json
+__pycache__
+.pytest_cache
+.ruff_cache
+
+# Exclude sensitive/generated files at any depth, including accidental nested copies.
+**/__pycache__
+**/.env*
+**/*.session*
+**/*.db*
+**/*.sqlite*
+**/credentials*.json
+**/token*.json
+**/client_secret*.json
+**/authorized_user*.json
+**/.secrets
+**/secrets
+**/backups
