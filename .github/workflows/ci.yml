@@ -18,7 +18,6 @@ concurrency:
 env:
   ALLOW_LIVE_READS: 'false'
   ALLOW_AI_PROCESSING: 'false'
-  ASSISTANT_CONFIG_TOML: 'mode="synthetic"'
 
 jobs:
   checks:
