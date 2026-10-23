@@ -38,6 +38,9 @@ docker build -t aissistant:mvp .
 docker run --rm --network none -v aissistant-test:/data aissistant:mvp /app/.venv/bin/aissistant --once
 ```
 
+Railway использует основной `Dockerfile` без secret mounts. Для сборки за TLS-прокси
+Codex предназначен отдельный `Dockerfile.codex`; команды в [проверках](docs/validation.md).
+
 Оба режима используют постоянное состояние. Для нового синтетического прогона
 можно выбрать другой `SYNTHETIC_DATABASE_URL` или удалить только тестовую БД.
 Нельзя сбрасывать live-БД для обычного перезапуска.

@@ -45,10 +45,10 @@ uv run --frozen --extra dev python tools/test_container.py
 ```
 
 В managed Codex environment используется штатный Docker socket, proxy configuration
-и временный secret с публичным CA:
+и **отдельный `Dockerfile.codex`** с временным secret публичного CA:
 
 ```bash
-docker --host=unix:///var/run/docker.sock build \
+docker --host=unix:///var/run/docker.sock build -f Dockerfile.codex \
   --secret id=build_ca,src="$CODEX_PROXY_CERT" \
   -t aissistant:railway-safe .
 ```
@@ -56,8 +56,9 @@ docker --host=unix:///var/run/docker.sock build \
 Для read-only Docker config/filesystem buildx state можно держать в writable
 `BUILDX_CONFIG=/workspace/.cache/buildx`, не заменяя Docker config/registry credentials.
 В текущем прогоне host networking и отключение TLS не требовались. CA mount существует
-только в RUN и не попадает в runtime image. На Railway без такого прокси optional
-secret не требуется. Не применяйте `--insecure`, `--trusted-host`, SSL verify=false.
+только в RUN и не попадает в runtime image. Railway использует основной
+`Dockerfile` без secret mounts: его builder отвергает такие mounts даже без значения
+секрета. Не меняйте `railway.toml` на `Dockerfile.codex`. Не применяйте `--insecure`, `--trusted-host`, SSL verify=false.
 
 Подробности, реальные пробелы проверки и действия владельца:
 [deployment-audit.md](deployment-audit.md). Чужая Railway auth-сессия и реальные
@@ -65,3 +66,26 @@ secret не требуется. Не применяйте `--insecure`, `--trust
 
 Сохранённые ранее cloud install/start instructions остаются инструкциями подготовки
 локального synthetic workflow, а не Railway deployment и не подтверждением публикации.
+
+## Исправление Railway build validation — 23 октября 2026
+
+Скриншот Railway подтвердил получение коммита, но builder отверг secret mounts
+до выполнения RUN. `Dockerfile` теперь не использует mounts; для локального
+Codex proxy trust выделен `Dockerfile.codex`. В Railway выбирается только основной файл.
+
+Проверено после изменения:
+
+- `pytest -q tests/test_deployment_files.py`: 2 passed. Проверяются выбранный Railway
+  Dockerfile, отсутствие неподдерживаемых mounts и совпадение всех шагов двух файлов,
+  кроме временного CA mount/env в Codex-варианте.
+- `docker build --check -f Dockerfile .`: no warnings. Это локальный синтаксический
+  check, не запуск builder Railway.
+- `docker build -f Dockerfile.codex --secret ...`: образ собран с TLS verification.
+- `tools/test_container.py --image aissistant:railway-fixed`: offline 5 → 0,
+  миграция/check, UID 10001, SQLite 0600, запрет второго worker, SIGTERM и restart passed.
+- Ruff, frozen lock и whitespace checks: passed. Бизнес-код worker не менялся;
+  полный предыдущий PostgreSQL/API contract suite в этом исправлении не повторялся.
+
+Успех следующего Railway deployment нужно подтвердить в его build/runtime logs.
+Повтор старого failed deployment может брать прежний коммит: выбирайте новую
+версию из main, с исправлением Dockerfile. Личные интеграции остаются выключенными.

@@ -1,8 +1,13 @@
 # Railway: безопасная настройка через браузер
 
-Текущий статус: контейнер/SQLite/PostgreSQL проверяются локально на синтетических
-данных. **Deployment именно в Railway ещё не проверен:** у Codex нет подключённого
-Railway аккаунта/браузера. Здесь нет утверждения, что сервис уже создан/запущен.
+Текущий статус: исходники опубликованы в GitHub; на предоставленном скриншоте
+Railway успешно получил коммит, но отклонил прежний Dockerfile при validation.
+Причина — `RUN --mount=type=secret`, который Railway builder не принимает.
+Основной `Dockerfile` исправлен: secret mounts удалены, TLS verification сохранена.
+Для Codex с собственным TLS-прокси есть отдельный `Dockerfile.codex`; Railway должен
+выбирать **только `Dockerfile`**, как указано в `railway.toml`.
+
+Успешная полная сборка/работа на Railway ещё требует проверки нового deployment.
 Личные интеграции включать только после отдельного подтверждения владельца.
 
 [Полный список env](environment-variables.md) · [Личная авторизация](personal-authorization.md) ·
@@ -11,8 +16,8 @@ Railway аккаунта/браузера. Здесь нет утвержден�
 ## 1. Подготовить исходники
 
 1. Проверьте изменения локально, сохраните их Git-коммитом и отправьте в **приватный**
-   GitHub repository/ветку, которую вы выберете в Railway. Codex в этой задаче ничего
-   не push/deploy. Если удалённая ветка пока пустая, Railway не сможет её собрать.
+   GitHub repository/ветку, которую вы выберете в Railway. `main` уже создана и
+   опубликована; новый deploy должен брать последний коммит с исправлением Dockerfile.
 2. `.gitignore` защищает Git workflow, но не ручную загрузку файлов через GitHub UI.
    Не загружайте `.env`, `.data`, `.venv`, local config, `.session`, OAuth JSON,
    SQL dumps, clipboard screenshots и credentials. Не перетаскивайте весь checkout
@@ -30,7 +35,8 @@ Railway аккаунта/браузера. Здесь нет утвержден�
    branch и **Root Directory**. Если файлы лежат в корне Git repository — оставьте
    корень, не `/workspace/aissistant` (это путь Codex, не Railway).
 3. `railway.toml` выбирает Dockerfile и `numReplicas=1`. В **Settings → Build/Deploy**
-   проверьте Dockerfile builder, одну реплику в одном регионе, restart on failure
+   проверьте Dockerfile builder и путь `Dockerfile` (не `Dockerfile.codex`),
+   одну реплику в одном регионе, restart on failure
    с лимитом 5. Не запускайте несколько services на одной рабочей БД.
 4. **Custom Start Command** оставьте пустым: используются Docker ENTRYPOINT/CMD.
    **Healthcheck Path** пустой, public domain не создавайте. Это постоянный worker,
