@@ -7,7 +7,7 @@
 
 | Актив / граница | Угроза | Мера и проверка | Остаточный риск |
 |---|---|---|---|
-| Telegram → worker | Чтение чужих или ещё не разрешённых чатов | Двойной opt-in, receive_updates=False и числовой allowlist до создания адаптера; тесты запрета | StringSession сама по себе даёт полный доступ к аккаунту |
+| Telegram → worker | Чтение чужих или ещё не разрешённых чатов | Двойной opt-in, receive_updates=False и explicit allowlist / отдельный двойной opt-in all до создания адаптера; тесты запрета | StringSession сама по себе даёт полный доступ к аккаунту |
 | Runtime secrets → SDK | Утечка сессий/токенов | Только env, StringSession в памяти, git/docker ignore; никаких login утилит в worker | Администратор runtime может прочитать env; ротация вне приложения |
 | Письмо/сообщение → модель | Prompt injection, ложные приказы, эксфильтрация | Текст — только данные; строгая Pydantic-схема, модель без tools; ссылка и получатель вне вывода модели | Галлюцинации/ошибочная классификация; черновик требует проверки человеком |
 | Worker → OpenAI | Ненамеренная передача персональных данных | Отдельное согласие, ограничение длины, без вложений; store=false | Провайдер видит переданный текст; нужна оценка договорных условий |
@@ -38,8 +38,8 @@ allowlist, owner ID и настройки доступа Railway.
 
 - `config.py:Settings.validate_live`: два явных разрешения, конфигурация источников,
   проверка allowlist и наличия доступа только к выбранным peers.
-- `sources.py:TelegramSource`: только InputPeer из allowlist, baseline и курсор
-  каждого чата, без перечисления диалогов/авторизации; FloodWait в состоянии БД.
+- `sources.py:TelegramSource`: InputPeer из explicit allowlist либо подтверждённого
+  all discovery, baseline и курсор каждого чата, без личной авторизации; FloodWait в состоянии БД.
 - `sources.py:GmailSource`: tokeninfo, History API, проверка привязки аккаунта,
   курсор после всей пагинации; 404 history требует ручного решения.
 - `classifier.py:OpenAIClassifier`: структурированный вывод, store=false, без tools.
@@ -49,3 +49,16 @@ allowlist, owner ID и настройки доступа Railway.
 
 Это меры проекта и проверки синтетическими/поддельными данными, не подтверждение
 безопасности облачного аккаунта или авторизованных внешних интеграций.
+
+## Дополнительные угрозы v0.2
+
+| Граница | Мера | Остаточный риск |
+|---|---|---|
+| all discovery → доступ ко многим чатам | confirm_all + ALLOW_TELEGRAM_ALL, исключения типов/IDs, baseline без backfill | Metadata содержит peer hashes и иногда последнее сообщение; кэш БД чувствителен |
+| Личная переписка → OpenAI | local_only по умолчанию, исключения sender/chat/keywords, secret heuristics до HTTP | Не все секреты обнаружимы; группу нельзя автоматически считать непубличной |
+| Входящие → стоимость | Резерв до HTTP, requests/day/cycle, no SDK retries, durable usage | Тарифы задаёт оператор; резерв консервативен, внешние расходы не учтены |
+| Входящие → поток сообщений боту | Приоритеты, bounded digest, durable hourly cap | Ошибка модели может повысить приоритет; Critical тоже задерживается лимитом |
+| Low → хранение личной информации | По умолчанию metadata-only, retention даже незапрошенного Low | Summary, ID и ссылки в БД всё равно требуют защиты |
+
+Ключевые проверки: test_monitoring.py, новые cases test_integrations.py,
+versioned v1 migration и SQLite/PostgreSQL copy в test_database.py.

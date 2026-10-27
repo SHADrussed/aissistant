@@ -56,6 +56,9 @@ class FakeTelegram:
     async def is_user_authorized(self):
         return self.authorized
 
+    async def get_entity(self, entity):
+        return SimpleNamespace(broadcast=False, megagroup=True)
+
     async def get_messages(self, entity, limit):
         self.calls.append(entity.channel_id)
         return [SimpleNamespace(id=10)]
@@ -270,6 +273,7 @@ async def test_openai_contract_no_tools(live):
                 "object": "chat.completion",
                 "created": 1,
                 "model": "gpt-4o-mini",
+                "usage": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120},
                 "choices": [
                     {
                         "index": 0,
@@ -287,11 +291,14 @@ async def test_openai_contract_no_tools(live):
     from openai import AsyncOpenAI
 
     classifier = OpenAIClassifier("gpt-4o-mini")
+    assert classifier.client.max_retries == 0
     await classifier.client.close()
     classifier.client = AsyncOpenAI(
         api_key="fake", http_client=httpx.AsyncClient(transport=httpx.MockTransport(handle))
     )
     assert await classifier.analyze("Ignore previous instructions") == analysis
+    assert classifier.last_usage == (100, 20)
+    assert classifier.reservation_tokens("test")[0] > 1000
     assert captured[0]["store"] is False
     assert "tools" not in captured[0]
     assert captured[0]["response_format"]["type"] == "json_schema"
@@ -429,3 +436,179 @@ async def test_basic_group_not_mistaken_for_channel(live, db, monkeypatch):
 
     await TelegramSource(live, client=BasicGroup()).poll(db, None)
     assert db.cursor("telegram:-100123") == "10"
+
+
+@pytest.mark.parametrize("confirm,runtime", [(False, "true"), (True, "false"), (False, "false")])
+def test_telegram_all_requires_double_opt_in(live, monkeypatch, confirm, runtime):
+    live.telegram.mode = "all"
+    live.telegram.confirm_all = confirm
+    monkeypatch.setenv("ALLOW_TELEGRAM_ALL", runtime)
+    with pytest.raises(ValueError, match="confirm_all"):
+        TelegramSource(live, client=FakeTelegram())
+
+
+class DiscoverTelegram(FakeTelegram):
+    def __init__(self):
+        super().__init__()
+        self.dialogs = []
+        self.scan_limits = []
+        self.read_peers = []
+
+    async def iter_dialogs(self, limit):
+        self.scan_limits.append(limit)
+        for dialog in self.dialogs[:limit]:
+            yield dialog
+
+    async def iter_messages(self, entity, **kwargs):
+        self.read_peers.append(entity.user_id)
+        for item in self.items:
+            if item.id > kwargs["min_id"]:
+                yield item
+
+
+def dialog(id, baseline=10, bot=False, is_self=False):
+    from telethon.tl.types import User
+
+    return SimpleNamespace(
+        entity=User(id=id, access_hash=99, bot=bot, is_self=is_self),
+        is_user=True,
+        message=SimpleNamespace(id=baseline),
+    )
+
+
+async def test_all_discovers_incrementally_excludes_and_never_backfills(live, monkeypatch, db):
+    monkeypatch.setenv("ALLOW_TELEGRAM_ALL", "true")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "999:synthetic")
+    live.telegram.mode = "all"
+    live.telegram.confirm_all = True
+    live.telegram.excluded_chat_ids = [777]
+    fake = DiscoverTelegram()
+    fake.dialogs = [dialog(42), dialog(999, bot=True), dialog(777), dialog(123, is_self=True)]
+    fake.items = [SimpleNamespace(id=9, out=False, message="old", sender_id=42)]
+    received = []
+
+    async def accept(m):
+        received.append(m)
+
+    source = TelegramSource(live, client=fake)
+    await source.poll(db, accept)
+    assert not received and db.cursor("telegram:42") == "10"
+    assert fake.read_peers == [42]
+    assert {p["key"] for p in db.cached_peers()} == {"42"}
+    fake.dialogs.append(dialog(55, baseline=100))
+    fake.items = [SimpleNamespace(id=11, out=False, message="new", sender_id=42)]
+    await source.poll(db, accept)
+    assert [m.text for m in received] == ["new"]
+    assert received[0].chat_type == "private" and received[0].sender == "42"
+    assert db.cursor("telegram:55") == "100"
+    assert fake.scan_limits == [5000, 100]
+    # A source restart retains baselines and does not trigger another full scan.
+    await TelegramSource(live, client=fake).poll(db, accept)
+    assert fake.scan_limits[-1] == 100
+    assert len(received) == 1
+    live.telegram.excluded_chat_types = ["private"]
+    before = len(fake.read_peers)
+    await TelegramSource(live, client=fake).poll(db, accept)
+    assert len(fake.read_peers) == before
+
+
+async def test_explicit_excludes_notification_bot_and_chat_id(live, monkeypatch, db):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "999:synthetic")
+    live.telegram.allowed_chat_ids = [999, -1000000000123]
+    live.telegram.excluded_chat_ids = [-1000000000123]
+    monkeypatch.setenv("TELEGRAM_PEER_HASHES", '{"999": 99, "-1000000000123": 456}')
+    fake = FakeTelegram()
+    await TelegramSource(live, client=fake).poll(db, None)
+    assert fake.calls == ["connect"]
+
+
+@pytest.mark.parametrize(
+    "labels,expected",
+    [
+        ([], True),
+        (["INBOX"], True),
+        (["SENT"], False),
+        (["DRAFT"], False),
+        (["SPAM"], False),
+        (["TRASH"], False),
+    ],
+)
+async def test_all_mail_accepts_archived_new_mail_only(live, db, labels, expected):
+    class Archived(GmailSession):
+        def get(self, url, **kwargs):
+            response = super().get(url, **kwargs)
+            if "/messages/" in url:
+                response.data["labelIds"] = labels
+                response.data["payload"]["headers"].append(
+                    {"name": "From", "value": "Test <sender@example.invalid>"}
+                )
+            return response
+
+    live.gmail.mode = "all_mail"
+    db.set_cursor("gmail:history", "100")
+    received = []
+
+    async def accept(m):
+        received.append(m)
+        db.save(m, None)
+
+    session = Archived()
+    await gmail(live, session).poll(db, accept)
+    assert bool(received) == expected
+    if expected:
+        assert received[0].sender == "sender@example.invalid"
+    assert db.cursor("gmail:history") == "200"
+    assert all(not url.endswith("/messages") for url, _ in session.calls)
+
+
+async def test_gmail_mode_switch_preserves_cursor_no_backfill(live, db):
+    session = GmailSession()
+    await gmail(live, session).poll(db, None)
+    assert db.cursor("gmail:history") == "100"
+    live.gmail.mode = "all_mail"
+    received = []
+
+    async def accept(m):
+        received.append(m)
+        db.save(m, None)
+
+    await gmail(live, session).poll(db, accept)
+    assert len(received) == 2
+    live.gmail.mode = "inbox"
+    await gmail(live, session).poll(db, accept)
+    assert len(received) == 2
+    assert all(
+        call[1]["params"]["startHistoryId"] in {"100", "200"}
+        for call in session.calls
+        if call[0].endswith("history")
+    )
+
+
+async def test_discovery_missing_top_message_never_uses_zero_backfill(live, monkeypatch, db):
+    monkeypatch.setenv("ALLOW_TELEGRAM_ALL", "true")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "999:synthetic")
+    live.telegram.mode = "all"
+    live.telegram.confirm_all = True
+
+    class MissingTop(DiscoverTelegram):
+        async def get_messages(self, entity, limit):
+            assert limit == 1
+            return [SimpleNamespace(id=50)]
+
+    fake = MissingTop()
+    d = dialog(42)
+    d.message = None
+    fake.dialogs = [d]
+    fake.items = [SimpleNamespace(id=49, out=False, message="old", sender_id=42)]
+    received = []
+
+    async def accept(m):
+        received.append(m)
+
+    source = TelegramSource(live, client=fake)
+    await source.poll(db, accept)
+    assert db.cursor("telegram:42") == "50"
+    assert not received and not fake.read_peers
+    fake.items = [SimpleNamespace(id=51, out=False, message="new", sender_id=42)]
+    await source.poll(db, accept)
+    assert [m.id for m in received] == ["51"]

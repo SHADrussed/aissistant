@@ -37,7 +37,7 @@ def main():
         for expected in ("sent=5", "sent=0"):
             result = docker(*base, "--rm", image, "/app/.venv/bin/aissistant", "--once")
             assert expected in result.stderr
-            assert "revision=0001_initial" in result.stderr
+            assert "revision=0002_monitoring" in result.stderr
             assert "Синтетический клиент" not in result.stderr + result.stdout
         inspect_code = """
 import importlib.util, os
@@ -61,7 +61,7 @@ print("nonroot_secret_exclusion_and_permissions: ok")
             "/app/.venv/bin/aissistant-db",
             "check",
         )
-        assert json.loads(result.stdout)["revision"] == "0001_initial"
+        assert json.loads(result.stdout)["revision"] == "0002_monitoring"
         # Notification probe is explicitly invoked; missing bot secrets fail safely offline.
         probe = docker(
             *base, "--rm", image, "/app/.venv/bin/aissistant", "--test-notification", check=False

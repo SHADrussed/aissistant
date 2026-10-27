@@ -13,6 +13,12 @@ class Category(StrEnum):
     OTHER = "другое"
 
 
+class Priority(StrEnum):
+    CRITICAL = "critical"
+    IMPORTANT = "important"
+    LOW = "low"
+
+
 class Analysis(BaseModel):
     model_config = ConfigDict(extra="forbid")
     categories: list[Category] = Field(min_length=1, max_length=6)
@@ -20,6 +26,7 @@ class Analysis(BaseModel):
     recommendation: str = Field(min_length=1, max_length=200)
     draft: str = Field(max_length=300)
     agreement: str = Field(max_length=200)
+    priority: Priority = Priority.IMPORTANT
 
 
 @dataclass(frozen=True)
@@ -29,3 +36,5 @@ class Message:
     id: str
     text: str
     link: str
+    sender: str = ""
+    chat_type: str = "unknown"

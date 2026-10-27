@@ -22,7 +22,7 @@ shell. Секретные поля запечатывайте (Seal), если �
 | `TELEGRAM_API_ID` | Не нужен | Если `telegram.enabled=true` | Положительное число из my.telegram.org |
 | `TELEGRAM_API_HASH` | Не нужен | Если Telegram включён, secret | API hash приложения |
 | `TELEGRAM_SESSION` | Не нужен | Если Telegram включён, secret | **Строка StringSession**, не имя файла. Получается только на личном устройстве, не сохраняется в volume/репозитории/логах |
-| `TELEGRAM_PEER_HASHES` | Не нужен | Для разрешённых users/channels, secret | JSON: signed numeric chat ID → integer access_hash. Для обычной группы с отрицательным ID выше `-1000000000000` hash не требуется. Ключи JSON — строки, значения — числа, не строки |
+| `TELEGRAM_PEER_HASHES` | Не нужен | Для explicit users/channels, secret | JSON: signed numeric chat ID → integer access_hash. Для обычной группы с отрицательным ID выше `-1000000000000` hash не требуется. Ключи JSON — строки, значения — числа, не строки |
 | `GMAIL_CLIENT_ID` | Не нужен | Если `gmail.enabled=true` | OAuth Desktop client ID |
 | `GMAIL_CLIENT_SECRET` | Не нужен | Если Gmail включён, secret | Секрет того же Desktop client |
 | `GMAIL_REFRESH_TOKEN` | Не нужен | Если Gmail включён, secret | Offline refresh token с **единственным** scope `https://www.googleapis.com/auth/gmail.readonly` |
@@ -60,3 +60,14 @@ Railway, не строку с буквальными `\n`. Если задан i
 Начальная миграция схемы выполняется worker автоматически под его блокировкой.
 Секреты и одноразовые URL в shell передавайте через доверенный локальный env manager,
 без литеральных значений в истории команд. Утилита авторизации не использует эти DSN.
+
+## v0.2
+
+`ALLOW_TELEGRAM_ALL=true` — дополнительное runtime-согласие только для
+telegram.mode=all + confirm_all=true. По умолчанию отсутствует/false. Обычные
+ALLOW_LIVE_READS и ALLOW_AI_PROCESSING остаются обязательными для live.
+В all peer hashes приходят из metadata в защищённую БД; StringSession остаётся
+только в runtime secret и памяти. Лимиты, тарифы, исключения, private policy и
+digest задаются в TOML, не новыми secret переменными.
+`MIGRATION_DATABASE_URL` также используется `aissistant-db usage` для просмотра
+агрегированных счётчиков без текста/DSN. [Полная инструкция](v0.2.md).

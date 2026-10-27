@@ -1,7 +1,7 @@
 # База данных и миграции
 
 Поддержаны SQLite и PostgreSQL через psycopg; текущая Alembic revision —
-`0001_initial`. Worker применяет миграции при запуске под эксклюзивной блокировкой.
+`0002_monitoring` (v0.2). Worker применяет миграции при запуске под эксклюзивной блокировкой.
 Это не полноценный механизм zero-downtime upgrades: перед будущими изменениями
 схемы остановите worker и проверьте backup. Встроенный destructive downgrade запрещён.
 
@@ -25,7 +25,7 @@ uv run --frozen aissistant-db upgrade
 ```
 
 Обе требуют `MIGRATION_DATABASE_URL`; они не выбирают личную БД по умолчанию.
-`check` ничего не мигрирует. Успех выводит только `{"revision":"0001_initial"}`,
+`check` ничего не мигрирует. Успех выводит только `{"revision":"0002_monitoring"}`,
 ошибка — фиксированный `database_operation_failed`, без DSN/traceback/SQL values.
 На Railway обычный старт не требует отдельного pre-deploy command. Для SQLite
 pre-deploy environment может не иметь volume; миграция поэтому выполняется внутри
@@ -96,3 +96,10 @@ uv run --frozen --extra dev python tools/test_postgres.py
 очереди/курсора/дедупликации. Созданные контейнер/volume/сеть удаляются в finally.
 Личные DSN, токены и сообщения ему не нужны. Обычный `pytest` без `TEST_POSTGRES_URL`
 явно пропускает PostgreSQL cases; такой запуск не доказывает поддержку PostgreSQL.
+
+## v0.2
+
+Миграция 0002 добавляет priority=important в прежний outbox, telegram_peers и
+api_usage. Все курсоры, seen, payload и delivered сохраняются. Перенос копирует
+новые таблицы также; источник нужно сначала обновить. Откат — только проверенный
+backup + соответствующая старая версия. [Порядок обновления](v0.2.md#обновление-и-rollback).

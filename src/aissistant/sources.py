@@ -5,6 +5,7 @@ import logging
 import os
 import time
 from datetime import UTC, datetime
+from email.utils import parseaddr
 from urllib.parse import quote
 
 import requests
@@ -41,7 +42,13 @@ class TelegramSource:
         if settings.mode != "live" or not settings.telegram.enabled:
             raise ValueError("Telegram disabled")
         self.hashes = json.loads(os.getenv("TELEGRAM_PEER_HASHES", "{}"))
+        self.config = settings.telegram
         self.chats = tuple(dict.fromkeys(settings.telegram.allowed_chat_ids))
+        token_id = required("TELEGRAM_BOT_TOKEN").split(":", 1)[0]
+        self.bot_id = int(token_id) if token_id.isdecimal() else None
+        if self.config.mode == "all" and self.bot_id is None:
+            raise ValueError("Bot token must identify notification bot")
+        self.types = {}
         self.limit = settings.telegram.batch_size
         self.max_text = settings.max_text_chars
         if client is None:
@@ -69,9 +76,29 @@ class TelegramSource:
             self.connected = True
         from telethon.errors import FloodWaitError
 
-        # Failure in one chat must not starve all other allowed chats.
         failed = False
+        if self.config.mode == "all":
+            retry_key = "telegram:discovery_retry"
+            if float(store.cursor(retry_key) or "0") <= time.time():
+                try:
+                    await self._discover(store)
+                except FloodWaitError as exc:
+                    store.set_cursor(retry_key, str(time.time() + max(1, exc.seconds)))
+                    failed = True
+                except Exception:
+                    failed = True
+            cached = store.cached_peers()
+            self.chats = tuple(int(p["key"]) for p in cached)
+            for peer in cached:
+                chat = int(peer["key"])
+                self.hashes[str(chat)] = int(peer["access_hash"])
+                self.types[chat] = peer["chat_type"]
+                if store.cursor(f"telegram:{chat}") is None and int(peer["baseline"]) >= 0:
+                    store.set_cursor(f"telegram:{chat}", peer["baseline"])
+        # Failure in one chat must not starve all other allowed chats.
         for chat in self.chats:
+            if chat == self.bot_id or chat in self.config.excluded_chat_ids:
+                continue
             wait_key = f"telegram:retry:{chat}"
             if int(store.cursor(wait_key) or "0") > time.time():
                 failed = True
@@ -86,6 +113,48 @@ class TelegramSource:
         if failed:
             raise RuntimeError("Telegram chat poll failed")
 
+    async def _discover(self, store):
+        from telethon.utils import get_peer_id
+
+        full = (
+            time.time() - float(store.cursor("telegram:discovery_full") or "0")
+            >= self.config.discovery_refresh_seconds
+        )
+        limit = self.config.discovery_max_dialogs if full else self.config.discovery_recent_limit
+        # Metadata only. Bounded recent scan each poll, bounded full refresh once a day.
+        async for dialog in self.client.iter_dialogs(limit=limit):
+            entity = dialog.entity
+            chat = get_peer_id(entity)
+            if (
+                getattr(entity, "is_self", False)
+                or chat == self.bot_id
+                or chat in self.config.excluded_chat_ids
+            ):
+                continue
+            kind = (
+                "bot"
+                if getattr(entity, "bot", False)
+                else "private"
+                if dialog.is_user
+                else "channel"
+                if getattr(entity, "broadcast", False)
+                else "supergroup"
+                if getattr(entity, "megagroup", False)
+                else "group"
+            )
+            if kind in self.config.excluded_chat_types:
+                continue
+            store.cache_peer(
+                chat,
+                getattr(entity, "access_hash", 0),
+                kind,
+                # Missing top-message metadata is not proof of an empty history.
+                # Leave the cursor unset: _chat fetches only the latest ID and returns.
+                getattr(getattr(dialog, "message", None), "id", -1),
+            )
+        if full:
+            store.set_cursor("telegram:discovery_full", str(time.time()))
+
     async def _chat(self, chat, store, accept):
         key = f"telegram:{chat}"
         cursor = store.cursor(key)
@@ -97,6 +166,24 @@ class TelegramSource:
             entity = InputPeerChannel(-chat - 1000000000000, self.hashes[str(chat)])
         else:
             entity = InputPeerChat(-chat)
+        kind = self.types.get(chat)
+        if kind is None:
+            # Resolve only explicitly enabled peer metadata, never enumerate dialogs.
+            info = await self.client.get_entity(entity)
+            kind = (
+                "bot"
+                if getattr(info, "bot", False)
+                else "private"
+                if chat > 0
+                else "channel"
+                if getattr(info, "broadcast", False)
+                else "supergroup"
+                if getattr(info, "megagroup", False)
+                else "group"
+            )
+            self.types[chat] = kind
+        if kind in self.config.excluded_chat_types:
+            return
         if cursor is None:
             latest = await self.client.get_messages(entity, limit=1)
             store.set_cursor(key, str(latest[0].id if latest else 0))
@@ -107,7 +194,11 @@ class TelegramSource:
             reverse=True,
             limit=self.limit,
         ):
-            if not item.out and item.message:
+            if (
+                not item.out
+                and item.message
+                and (self.bot_id is None or getattr(item, "sender_id", None) != self.bot_id)
+            ):
                 # t.me/c supports private supergroups/channels, not private user dialogs.
                 link = (
                     f"https://t.me/c/{-chat - 1000000000000}/{item.id}"
@@ -121,6 +212,8 @@ class TelegramSource:
                         str(item.id),
                         item.message[: self.max_text],
                         link,
+                        str(getattr(item, "sender_id", "") or ""),
+                        kind,
                     )
                 )
             store.set_cursor(key, str(item.id))
@@ -153,6 +246,11 @@ class GmailSource:
         if settings.mode != "live" or not settings.gmail.enabled:
             raise ValueError("Gmail disabled")
         self.labels = set(settings.gmail.label_ids)
+        self.mode = settings.gmail.mode
+        if self.mode == "all_mail":
+            self.labels.discard("INBOX")
+        else:
+            self.labels.add("INBOX")
         self.max_text = settings.max_text_chars
         self.session = session or requests.Session()
         self.credentials = credentials or Credentials(
@@ -255,7 +353,25 @@ class GmailSource:
                         : self.max_text
                     ]
                     link = "https://mail.google.com/mail/u/0/#all/" + quote(ref["id"], safe="")
-                    await accept(Message("gmail", "me", ref["id"], text, link))
+                    sender = next(
+                        (
+                            h["value"]
+                            for h in payload.get("headers", [])
+                            if h["name"].lower() == "from"
+                        ),
+                        "",
+                    )
+                    await accept(
+                        Message(
+                            "gmail",
+                            "me",
+                            ref["id"],
+                            text,
+                            link,
+                            parseaddr(sender)[1].casefold(),
+                            "mail",
+                        )
+                    )
             token = page.get("nextPageToken")
             if not token:
                 store.set_cursor("gmail:history", str(page["historyId"]))
