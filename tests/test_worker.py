@@ -46,10 +46,10 @@ def worker(store, **kwargs):
 async def test_synthetic_dedup_across_restart(store):
     sink = Capture()
     assert await worker(store, notifier=sink).cycle()
-    assert len(sink.items) == 5
+    assert len(sink.items) == 1
     # New worker, same durable database.
     assert await worker(store, notifier=sink).cycle()
-    assert len(sink.items) == 5
+    assert len(sink.items) == 1
     assert store.pending() == []
     assert "Черновик (не отправлен)" in sink.items[0]
 
@@ -63,7 +63,7 @@ async def test_failed_delivery_retries_without_reclassification(store, caplog):
     assert "private message" not in caplog.text
     sink.fail = False
     assert await worker(store, notifier=sink).cycle()
-    assert len(sink.items) == 5
+    assert len(sink.items) == 1
 
 
 async def test_classification_failure_does_not_mark_seen(store):
@@ -132,7 +132,7 @@ async def test_failure_one_source_does_not_starve_other(store):
     w = worker(store, notifier=sink)
     w.sources.insert(0, Bad())
     assert not await w.cycle()
-    assert len(sink.items) == 5
+    assert len(sink.items) == 1
 
 
 async def test_notification_size_unicode():
@@ -156,6 +156,6 @@ async def test_outbox_survives_database_reopen(tmp_path):
     second = Store(url)
     sink = Capture()
     assert await worker(second, notifier=sink).cycle()
-    assert len(sink.items) == 5
+    assert len(sink.items) == 1
     assert second.pending() == []
     second.close()

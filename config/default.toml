@@ -13,12 +13,38 @@ end_hour = 24 # end exclusive; start must be less than end
 
 [telegram]
 enabled = false
+mode = "explicit"
+confirm_all = false
 allowed_chat_ids = [] # numeric signed IDs, never usernames
+excluded_chat_ids = []
+excluded_chat_types = ["bot", "channel"]
+discovery_recent_limit = 100
+discovery_max_dialogs = 5000
+discovery_refresh_seconds = 86400
 batch_size = 100
 
 [gmail]
 enabled = false
+mode = "inbox"
 label_ids = ["INBOX"] # all listed labels must be present
+
+[privacy]
+excluded_senders = [] # Telegram sender ID as string, or lowercase Gmail address
+excluded_chats = [] # signed ID string or source:scope, e.g. telegram:-123
+private_chat_policy = "local_only" # content never sent to AI; low metadata-only result
+personal_gmail_senders = []
+
+[notifications]
+digest_seconds = 900
+max_per_cycle = 10
+max_per_hour = 30
+digest_max_items = 20
 
 [ai]
 model = "gpt-4o-mini"
+max_requests_per_day = 100
+max_requests_per_cycle = 20
+daily_budget_usd = "1.00"
+input_usd_per_million = "0.15" # estimates; verify provider tariff before enabling live
+output_usd_per_million = "0.60"
+max_output_tokens = 1200

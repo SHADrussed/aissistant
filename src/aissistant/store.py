@@ -5,8 +5,10 @@ import time
 from pathlib import Path
 
 from sqlalchemy import (
+    BigInteger,
     Column,
     Float,
+    Integer,
     MetaData,
     String,
     Table,
@@ -33,6 +35,25 @@ outbox = Table(
     Column("payload", Text),
     Column("created", Float),
     Column("delivered", Float, nullable=True),
+    Column("priority", String(16), nullable=False, server_default="important"),
+)
+peers = Table(
+    "telegram_peers",
+    meta,
+    Column("key", String(200), primary_key=True),
+    Column("access_hash", String(32), nullable=False),
+    Column("chat_type", String(16), nullable=False),
+    Column("baseline", String(32), nullable=False),
+)
+usage = Table(
+    "api_usage",
+    meta,
+    Column("key", String(200), primary_key=True),
+    Column("requests", Integer, nullable=False),
+    Column("input_tokens", BigInteger, nullable=False),
+    Column("output_tokens", BigInteger, nullable=False),
+    Column("reserved_micro_usd", BigInteger, nullable=False),
+    Column("actual_micro_usd", BigInteger, nullable=False),
 )
 
 
@@ -42,7 +63,7 @@ def message_key(m: Message) -> str:
 
 def render(m: Message, a: Analysis) -> str:
     return (
-        f"Сводка · {', '.join(a.categories)}\n{a.summary}\n"
+        f"Сводка · {a.priority} · {', '.join(a.categories)}\n{a.summary}\n"
         f"Договорённость: {a.agreement or 'не обнаружена'}\n"
         f"Рекомендация: {a.recommendation}\nЧерновик (не отправлен): {a.draft or '—'}\n"
         f"Источник: {m.source} / {m.scope} / {m.id}\n{m.link or 'ссылка недоступна для личного чата'}"
@@ -133,18 +154,17 @@ class Store:
                         payload=render(m, analysis),
                         created=time.time(),
                         delivered=None,
+                        priority=analysis.priority,
                     )
                 )
 
-    def pending(self):
+    def pending(self, priorities=None, limit=100):
         with self.engine.connect() as c:
+            statement = select(outbox).where(outbox.c.delivered.is_(None))
+            if priorities is not None:
+                statement = statement.where(outbox.c.priority.in_(priorities))
             return (
-                c.execute(
-                    select(outbox)
-                    .where(outbox.c.delivered.is_(None))
-                    .order_by(outbox.c.created, outbox.c.key)
-                    .limit(100)
-                )
+                c.execute(statement.order_by(outbox.c.created, outbox.c.key).limit(limit))
                 .mappings()
                 .all()
             )
@@ -156,6 +176,91 @@ class Store:
     def prune(self, days: int):
         with self.engine.begin() as c:
             c.execute(delete(outbox).where(outbox.c.delivered < time.time() - days * 86400))
+            c.execute(
+                delete(outbox).where(
+                    outbox.c.priority == "low", outbox.c.created < time.time() - days * 86400
+                )
+            )
+
+    def cache_peer(self, chat, access_hash, chat_type, baseline):
+        with self.engine.begin() as c:
+            if not c.execute(select(peers.c.key).where(peers.c.key == str(chat))).first():
+                c.execute(
+                    insert(peers).values(
+                        key=str(chat),
+                        access_hash=str(access_hash or 0),
+                        chat_type=chat_type,
+                        baseline=str(baseline),
+                    )
+                )
+            else:
+                c.execute(
+                    update(peers)
+                    .where(peers.c.key == str(chat))
+                    .values(access_hash=str(access_hash or 0), chat_type=chat_type)
+                )
+
+    def cached_peers(self):
+        with self.engine.connect() as c:
+            return c.execute(select(peers)).mappings().all()
+
+    def api_usage(self, day):
+        with self.engine.connect() as c:
+            row = c.execute(select(usage).where(usage.c.key == day)).mappings().first()
+            return (
+                dict(row)
+                if row
+                else dict(
+                    key=day,
+                    requests=0,
+                    input_tokens=0,
+                    output_tokens=0,
+                    reserved_micro_usd=0,
+                    actual_micro_usd=0,
+                )
+            )
+
+    def reserve_api(self, day, amount, max_requests, budget):
+        # Runtime requires one worker. Reservation survives errors and process death.
+        with self.engine.begin() as c:
+            row = c.execute(select(usage).where(usage.c.key == day)).mappings().first()
+            if row is None:
+                c.execute(
+                    insert(usage).values(
+                        key=day,
+                        requests=0,
+                        input_tokens=0,
+                        output_tokens=0,
+                        reserved_micro_usd=0,
+                        actual_micro_usd=0,
+                    )
+                )
+                count, reserved = 0, 0
+            else:
+                count, reserved = (
+                    row["requests"],
+                    max(row["reserved_micro_usd"], row["actual_micro_usd"]),
+                )
+            if count >= max_requests or reserved + amount > budget:
+                return False
+            c.execute(
+                update(usage)
+                .where(usage.c.key == day)
+                .values(requests=count + 1, reserved_micro_usd=reserved + amount)
+            )
+            return True
+
+    def record_api(self, day, input_tokens, output_tokens, actual):
+        with self.engine.begin() as c:
+            c.execute(
+                update(usage)
+                .where(usage.c.key == day)
+                .values(
+                    input_tokens=usage.c.input_tokens + input_tokens,
+                    output_tokens=usage.c.output_tokens + output_tokens,
+                    actual_micro_usd=usage.c.actual_micro_usd + actual,
+                )
+            )
 
     def close(self):
         try:

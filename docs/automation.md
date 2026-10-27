@@ -1,6 +1,6 @@
 # Автоматические проверки и развёртывание
 
-`.github/workflows/ci.yml` запускается при push в `main`, в pull request,
+`.github/workflows/ci.yml` запускается при push в `main` и `feature/**`, в pull request,
 по понедельникам в 06:17 UTC и вручную через **GitHub → Actions → CI → Run workflow**.
 Расписание GitHub выполняется с возможной задержкой, а не с гарантией точного времени.
 Если Actions отключён для репозитория, включите его в **Settings → Actions → General**.

@@ -4,7 +4,7 @@ from sqlalchemy import MetaData, Table, event, insert, inspect, select
 
 from aissistant.database import HEAD, copy_offline, make_engine, revision, upgrade
 from aissistant.models import Analysis, Message
-from aissistant.store import Store, cursors, meta, outbox, seen
+from aissistant.store import Store, cursors, outbox, seen
 
 
 def sample():
@@ -35,7 +35,10 @@ def test_fresh_migration_and_idempotence(database_url):
 
 def test_legacy_schema_adopted_without_rewriting(database_url):
     engine = make_engine(database_url)
-    meta.create_all(engine)  # Original MVP, before Alembic existed.
+    import importlib
+
+    legacy = importlib.import_module("aissistant.migrations.versions.0001_initial")
+    legacy.schema().create_all(engine)  # Original MVP, before Alembic existed.
     with engine.begin() as c:
         c.execute(insert(cursors).values(key="old", value="123"))
         c.execute(insert(seen).values(key="k"))
@@ -116,11 +119,15 @@ def test_sqlite_to_postgres_preserves_queue_and_refuses_merge(tmp_path, postgres
     delivered_key = source.pending()[0]["key"]
     source.delivered(delivered_key)
     source.set_cursor("telegram:123", "50")
+    assert source.reserve_api("2026-10-27", 100, 10, 1000)
+    source.cache_peer(123, 456, "private", 50)
     source.close()
     counts = copy_offline(source_url, postgres_url)
-    assert counts == {"cursors": 1, "outbox": 2, "seen": 2}
+    assert counts == {"cursors": 1, "outbox": 2, "seen": 2, "api_usage": 1, "telegram_peers": 1}
     target = Store(postgres_url)
     assert target.cursor("telegram:123") == "50"
+    assert target.api_usage("2026-10-27")["reserved_micro_usd"] == 100
+    assert target.cached_peers()[0]["access_hash"] == "456"
     assert target.contains(m) and len(target.pending()) == 1
     assert target.pending()[0]["key"] != delivered_key
     before = target.pending()
@@ -132,3 +139,39 @@ def test_sqlite_to_postgres_preserves_queue_and_refuses_merge(tmp_path, postgres
     original = Store(source_url)
     assert len(original.pending()) == 1 and original.cursor("telegram:123") == "50"
     original.close()
+
+
+def test_upgrade_versioned_v1_preserves_all_state(database_url):
+    import importlib
+
+    from sqlalchemy import Column, String
+
+    engine = make_engine(database_url)
+    legacy = importlib.import_module("aissistant.migrations.versions.0001_initial").schema()
+    legacy.create_all(engine)
+    versions = Table(
+        "alembic_version", MetaData(), Column("version_num", String(32), primary_key=True)
+    )
+    versions.create(engine)
+    with engine.begin() as c:
+        c.execute(insert(versions).values(version_num="0001_initial"))
+        c.execute(insert(legacy.tables["cursors"]).values(key="gmail:history", value="retained"))
+        c.execute(insert(legacy.tables["seen"]).values(key="dedup"))
+        c.execute(
+            insert(legacy.tables["outbox"]),
+            [
+                dict(key="pending", payload="preserved", created=123.0, delivered=None),
+                dict(key="delivered", payload="delivered", created=124.0, delivered=125.0),
+            ],
+        )
+    upgrade(engine)
+    assert revision(engine) == HEAD
+    with engine.connect() as c:
+        rows = c.execute(select(outbox).order_by(outbox.c.key)).mappings().all()
+        assert [(r["key"], r["payload"], r["delivered"], r["priority"]) for r in rows] == [
+            ("delivered", "delivered", 125.0, "important"),
+            ("pending", "preserved", None, "important"),
+        ]
+        assert c.execute(select(cursors.c.value)).scalar_one() == "retained"
+        assert c.execute(select(seen.c.key)).scalar_one() == "dedup"
+    engine.dispose()

@@ -12,7 +12,7 @@ from alembic.runtime.migration import MigrationContext
 from sqlalchemy import create_engine, func, insert, select
 from sqlalchemy.engine import make_url
 
-HEAD = "0001_initial"
+HEAD = "0002_monitoring"
 
 
 def make_engine(url):
@@ -104,7 +104,7 @@ def main():
     os.umask(0o077)
     setup_logging()
     parser = argparse.ArgumentParser(description="Schema and offline database migration")
-    parser.add_argument("action", choices=["upgrade", "check", "copy"])
+    parser.add_argument("action", choices=["upgrade", "check", "copy", "usage"])
     parser.add_argument("--confirm-offline", action="store_true")
     args = parser.parse_args()
     try:
@@ -123,7 +123,17 @@ def main():
                     upgrade(engine)
                 if revision(engine) != HEAD:
                     raise ValueError("Database schema is not current")
-                print(json.dumps({"revision": HEAD}))
+                if args.action == "usage":
+                    from datetime import UTC, datetime
+
+                    from .store import usage
+
+                    day = datetime.now(UTC).date().isoformat()
+                    with engine.connect() as c:
+                        row = c.execute(select(usage).where(usage.c.key == day)).mappings().first()
+                        print(json.dumps(dict(row) if row else {"key": day, "requests": 0}))
+                else:
+                    print(json.dumps({"revision": HEAD}))
             finally:
                 engine.dispose()
     except Exception:

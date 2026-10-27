@@ -120,3 +120,39 @@ private owner через существующий BotNotifier; без загру
 подтверждает фактическую доставку реальным ботом: её должен проверить владелец
 в Railway по [инструкции](telegram-bot.md). Личные токены в Codex не передавались,
 реальные Telegram/Gmail/OpenAI не вызывались.
+
+## v0.2 — 27 октября 2026
+
+В feature-ветке реализованы режимы Telegram explicit/all, Gmail inbox/all_mail,
+локальные privacy filters, приоритеты/digest/low request, durable API reservations
+и миграция 0002_monitoring. Live и deploy не включались.
+
+Проверено локально:
+
+- Полный suite с одноразовым PostgreSQL 17: **141 passed**, без skips/warnings.
+- Два backend: versioned v1 → v2 сохраняет cursor/seen/pending/delivered;
+  SQLite → PostgreSQL copy сохраняет peer cache и budget reservations также.
+- Отдельные процессы + restart PostgreSQL: pending 5 → доставка → 0, без повторов.
+- Fake Telegram: двойной opt-in, bounded discovery, новые peers без истории,
+  durable baselines, исключения ID/type и notification bot.
+- Fake Gmail: all_mail принимает новую архивированную почту, исключает
+  SENT/DRAFT/SPAM/TRASH; смена режима сохраняет historyId и seen.
+- Privacy до AI: secrets, keywords, senders/chats; private local_only не
+  передаёт text/canary модели и не сохраняет его в карточке.
+- Бюджеты: zero/day/cycle, reservation после HTTP failure, usage/cost,
+  restart без сброса, cursor не перескакивает deferred сообщение.
+- Critical во время accept; grouped Important; Low только по запросу;
+  персистентный часовой cap и отказ от повторов отправки в том же цикле.
+- Ruff/check/format, frozen lock, whitespace и actionlint: passed.
+- Production Dockerfile: build --check без предупреждений. Локальная сборка
+  выполняется через эквивалентный Dockerfile.codex с временным CA proxy trust.
+
+Реальные Telegram/Gmail/OpenAI, качество классификации, актуальные тарифы и
+поведение v0.2 в Railway не проверялись. Перед выпуском нужны owner review,
+решение о merge/deploy, backup и контролируемая проверка после отдельного opt-in.
+Результат GitHub Actions следует оценивать по запуску конкретного commit;
+локальные тесты не являются подтверждением удалённого CI.
+
+Окончательный образ aissistant:v0.2 также прошёл tools/test_container.py:
+synthetic 5 → 0, schema check 0002, права non-root/0600, отсутствие local-auth
+и CA в runtime, отказ тестовой отправки без secrets, worker lock, SIGTERM/restart.

@@ -52,13 +52,18 @@ def build(settings):
         settings,
         Store(settings.database_url(), worker_lock=True),
         sources,
-        OpenAIClassifier(settings.ai.model),
+        OpenAIClassifier(settings.ai.model, settings.ai.max_output_tokens),
         BotNotifier(),
     )
 
 
-async def run(settings, once):
+async def run(settings, once, request_low=False):
     worker = build(settings)
+    if request_low:
+        try:
+            return 0 if await worker.request_low() else 1
+        finally:
+            await worker.close()
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for signum in (signal.SIGINT, signal.SIGTERM):
@@ -99,6 +104,11 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--once", action="store_true")
     mode.add_argument(
+        "--request-low",
+        action="store_true",
+        help="Deliver stored low-priority summaries without polling sources",
+    )
+    mode.add_argument(
         "--test-notification",
         action="store_true",
         help="Send one fixed owner notification without loading worker configuration",
@@ -111,7 +121,7 @@ def main():
             logging.getLogger("aissistant").info("test_notification_sent")
             result = 0
         else:
-            result = asyncio.run(run(load(args.config), args.once))
+            result = asyncio.run(run(load(args.config), args.once, args.request_low))
     except Exception:
         event = (
             "test_notification_failed_check_bot_configuration"

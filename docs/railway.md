@@ -119,7 +119,7 @@ session/API/bot credentials и Gmail OAuth для synthetic. Они ему не 
    Убедитесь, что сборка успешна и runtime содержит:
 
    ```text
-   database_ready backend=sqlite revision=0001_initial
+   database_ready backend=sqlite revision=0002_monitoring
    cycle_complete sent=5 success=True
    ```
 
@@ -204,3 +204,10 @@ label_ids = ["INBOX"]
 Локальный успех не подтверждает billing/квоты Railway, Docker build на его builder,
 private DNS/volume permissions, UI workflow, внешние API или реальные пользовательские
 согласия. Этот документ — процедура проверки владельцем, а не отчёт о её выполнении.
+
+## v0.2: отдельное одобрение выпуска
+
+Не направляйте Railway на feature-ветку и не включайте PR preview для реальных
+источников. Сначала review/CI, решение владельца о merge/deploy, backup и
+[миграция v0.2](v0.2.md). Приоритеты, privacy и бюджеты задаются TOML.
+Для all дополнительно нужен ALLOW_TELEGRAM_ALL; synthetic не требует его.
