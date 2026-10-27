@@ -62,6 +62,13 @@ print("nonroot_secret_exclusion_and_permissions: ok")
             "check",
         )
         assert json.loads(result.stdout)["revision"] == "0001_initial"
+        # Notification probe is explicitly invoked; missing bot secrets fail safely offline.
+        probe = docker(
+            *base, "--rm", image, "/app/.venv/bin/aissistant", "--test-notification", check=False
+        )
+        assert probe.returncode == 1
+        assert "test_notification_failed_check_bot_configuration" in probe.stderr
+        assert "Traceback" not in probe.stderr
         container = docker(*base, "-d", image).stdout.strip()
         until = time.monotonic() + 20
         while time.monotonic() < until:

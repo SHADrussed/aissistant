@@ -81,17 +81,44 @@ async def run(settings, once):
         await worker.close()
 
 
+async def test_notification():
+    bot = BotNotifier()
+    try:
+        await bot.send(
+            "Тест ИИ-секретаря: доставка уведомлений владельцу работает. "
+            "Переписка не читалась, OpenAI не вызывался."
+        )
+    finally:
+        await bot.close()
+
+
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description="Opt-in secretary worker")
     parser.add_argument("--config", default=os.getenv("ASSISTANT_CONFIG"))
-    parser.add_argument("--once", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--once", action="store_true")
+    mode.add_argument(
+        "--test-notification",
+        action="store_true",
+        help="Send one fixed owner notification without loading worker configuration",
+    )
     args = parser.parse_args()
     setup_logging()
     try:
-        result = asyncio.run(run(load(args.config), args.once))
+        if args.test_notification:
+            asyncio.run(test_notification())
+            logging.getLogger("aissistant").info("test_notification_sent")
+            result = 0
+        else:
+            result = asyncio.run(run(load(args.config), args.once))
     except Exception:
-        logging.getLogger("aissistant").error("startup_or_storage_failed_check_configuration")
+        event = (
+            "test_notification_failed_check_bot_configuration"
+            if args.test_notification
+            else "startup_or_storage_failed_check_configuration"
+        )
+        logging.getLogger("aissistant").error(event)
         result = 1
     raise SystemExit(result)
 
