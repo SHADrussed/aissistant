@@ -129,7 +129,7 @@ private owner через существующий BotNotifier; без загру
 
 Проверено локально:
 
-- Полный suite с одноразовым PostgreSQL 17: **141 passed**, без skips/warnings.
+- Полный suite с одноразовым PostgreSQL 17: **142 passed**, без skips/warnings.
 - Два backend: versioned v1 → v2 сохраняет cursor/seen/pending/delivered;
   SQLite → PostgreSQL copy сохраняет peer cache и budget reservations также.
 - Отдельные процессы + restart PostgreSQL: pending 5 → доставка → 0, без повторов.
@@ -156,3 +156,6 @@ private owner через существующий BotNotifier; без загру
 Окончательный образ aissistant:v0.2 также прошёл tools/test_container.py:
 synthetic 5 → 0, schema check 0002, права non-root/0600, отсутствие local-auth
 и CA в runtime, отказ тестовой отправки без secrets, worker lock, SIGTERM/restart.
+
+Дополнительно проверен discovery без top-message metadata: вместо cursor=0
+выполняется только latest-ID baseline с возвратом без обработки истории.

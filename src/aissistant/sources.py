@@ -93,7 +93,7 @@ class TelegramSource:
                 chat = int(peer["key"])
                 self.hashes[str(chat)] = int(peer["access_hash"])
                 self.types[chat] = peer["chat_type"]
-                if store.cursor(f"telegram:{chat}") is None:
+                if store.cursor(f"telegram:{chat}") is None and int(peer["baseline"]) >= 0:
                     store.set_cursor(f"telegram:{chat}", peer["baseline"])
         # Failure in one chat must not starve all other allowed chats.
         for chat in self.chats:
@@ -148,7 +148,9 @@ class TelegramSource:
                 chat,
                 getattr(entity, "access_hash", 0),
                 kind,
-                getattr(getattr(dialog, "message", None), "id", 0),
+                # Missing top-message metadata is not proof of an empty history.
+                # Leave the cursor unset: _chat fetches only the latest ID and returns.
+                getattr(getattr(dialog, "message", None), "id", -1),
             )
         if full:
             store.set_cursor("telegram:discovery_full", str(time.time()))

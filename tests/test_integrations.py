@@ -582,3 +582,33 @@ async def test_gmail_mode_switch_preserves_cursor_no_backfill(live, db):
         for call in session.calls
         if call[0].endswith("history")
     )
+
+
+async def test_discovery_missing_top_message_never_uses_zero_backfill(live, monkeypatch, db):
+    monkeypatch.setenv("ALLOW_TELEGRAM_ALL", "true")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "999:synthetic")
+    live.telegram.mode = "all"
+    live.telegram.confirm_all = True
+
+    class MissingTop(DiscoverTelegram):
+        async def get_messages(self, entity, limit):
+            assert limit == 1
+            return [SimpleNamespace(id=50)]
+
+    fake = MissingTop()
+    d = dialog(42)
+    d.message = None
+    fake.dialogs = [d]
+    fake.items = [SimpleNamespace(id=49, out=False, message="old", sender_id=42)]
+    received = []
+
+    async def accept(m):
+        received.append(m)
+
+    source = TelegramSource(live, client=fake)
+    await source.poll(db, accept)
+    assert db.cursor("telegram:42") == "50"
+    assert not received and not fake.read_peers
+    fake.items = [SimpleNamespace(id=51, out=False, message="new", sender_id=42)]
+    await source.poll(db, accept)
+    assert [m.id for m in received] == ["51"]
