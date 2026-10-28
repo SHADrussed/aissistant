@@ -1,0 +1,18 @@
+name = "aissistant-business-bridge"
+main = "src/index.ts"
+compatibility_date = "2026-07-30"
+workers_dev = false
+preview_urls = false
+
+[observability]
+enabled = false
+
+[vars]
+# Empty means deny all chats. Set only in your ignored deployment config.
+TELEGRAM_ALLOWED_CHAT_IDS = ""
+
+[[d1_databases]]
+binding = "DB"
+database_name = "aissistant-business-metadata"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"

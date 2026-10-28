@@ -25,3 +25,6 @@ __pycache__
 **/.secrets
 **/secrets
 **/backups
+
+# Independent Cloudflare component: exclude local secrets and build state.
+cloudflare/
